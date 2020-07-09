@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>MAP</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<link type="text/css" rel="stylesheet" href="main.css">
+		<style>
+			body {
+				background-color: #5ac1da;
+				color: #000;
+			}
+
+			a {
+				color: #f00;
+			}
+			#branding{
+				position:fixed;
+				background-image: url('images/branding2.png');
+				background-position: center top;
+				height:160px;
+				width:100%;
+				background-repeat: no-repeat;
+				background-size: 2400px 164px;
+				transition-property: background-size;
+ 				transition-duration: 1s;
+			}
+
+			@media only screen and (max-width: 868px) {
+				#branding{
+					background-size: 1800px 123px;
+					height:120px;
+				}
+			}
+
+			@media only screen and (max-width: 600px) {
+				#branding{
+					background-size: 1800px 123px;
+					height:120px;
+				}
+
+			}
+		</style>
+	</head>
+
+	<body>
+		<div id="branding">
+			
+		</div>
+		<div id="info">
+			
+			
+		</div>
+		<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.3.4/gsap.min.js"></script>
+		<script type="x-shader/x-vertex" id="vertexShader">
+
+			varying vec3 vWorldPosition;
+
+			void main() {
+
+				vec4 worldPosition = modelMatrix * vec4( position, 1.0 );
+				vWorldPosition = worldPosition.xyz;
+
+				gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+
+			}
+
+		</script>
+
+		<script type="x-shader/x-fragment" id="fragmentShader">
+
+			uniform vec3 topColor;
+			uniform vec3 bottomColor;
+			uniform float offset;
+			uniform float exponent;
+
+			varying vec3 vWorldPosition;
+
+			void main() {
+
+				float h = normalize( vWorldPosition + offset ).y;
+				gl_FragColor = vec4( mix( bottomColor, topColor, max( pow( max( h , 0.0), exponent ), 0.0 ) ), 1.0 );
+
+			}
+
+		</script>
+
+		<script type="module">
+
+			import * as THREE from './build/three.module.js';
+
+
+			import { GUI } from '/explorer/jsm/libs/dat.gui.module.js';
+
+			import { MapControls } from '/explorer/jsm/controls/OrbitControls.js';
+			import Stats from '/explorer/jsm/libs/stats.module.js';
+			import { GLTFLoader } from '/explorer/jsm/loaders/GLTFLoader.js';
+			import { TWEEN } from 'https://threejs.org/examples/jsm/libs/tween.module.min.js';
+
+			var camera, aspect, fov, controls, scene, renderer, mixer, gltf, stats, gui;
+			var dLightPalace, pLightPalace, dirLightGCB, poiLightGCB, hemiLight, poiLightOffice;
+			var tree, cloud, fg_cloud;
+			var composer, renderPass, saoPass;
+		
+			var postprocessing = {};
+			var effectController = {};
+			var matChanger;
+			var clock = new THREE.Clock();
+
+			init();
+			//render(); // remove when using next line for animation loop (requestAnimationFrame)
+			//buildGui();
+
+			//animate();
+
+			function init() {
+
+				scene = new THREE.Scene();
+				scene.background = new THREE.Color( 0x5ac1da );
+				//scene.fog = new THREE.FogExp2( 0xcccccc, 0.002 );
+
+				renderer = new THREE.WebGLRenderer( { antialias: true } );
+				renderer.toneMapping = THREE.ReinhardToneMapping;
+				renderer.toneMappingExposure = 2.3;
+				renderer.setPixelRatio( window.devicePixelRatio );
+				renderer.setSize( window.innerWidth, window.innerHeight );
+				document.body.appendChild( renderer.domElement );
+				//renderer.outputEncoding = THREE.sRGBEncoding;
+				renderer.shadowMap.enabled = true;
+
+				aspect = window.innerWidth / window.innerHeight;
+
+				// Set FOV based on viewport size
+				if(aspect > 1.8){
+					fov = 15;
+				} else if (aspect < 1.8 && aspect > 1){
+					fov = 16;
+				} else if (aspect < 1){
+					fov = 28;
+				}
+				camera = new THREE.PerspectiveCamera( fov, window.innerWidth / window.innerHeight, 9, 2000 );
+				//camera.position.set( -486, 325, 510 ); // old positions
+				camera.position.set( -486, 425, 610 );
+				camera.rotation.set(-29, -36.2, -17.4);
+				//camera.lookAt(new THREE.Vector3(-8.5, -3, 0));
+
+
+
+				stats = new Stats();
+				document.body.appendChild( stats.dom );
+
+				// controls
+
+				controls = new MapControls( camera, renderer.domElement );
+
+				controls.enableDamping = true; // an animation loop is required when either damping or auto-rotation are enabled
+				controls.dampingFactor = 0.1;
+
+				controls.screenSpacePanning = false;
+				controls.enableZoom = false;
+
+				// How far you can dolly in and out ( PerspectiveCamera only )
+				//controls.minDistance = 100;
+				//controls.maxDistance = 500;
+
+				// Set to false to disable use of the keys
+				controls.enableKeys = true;
+				controls.keyPanSpeed = 50.0;	// pixels moved per arrow key push
+
+				// The four arrow keys
+				controls.keys = { LEFT: 37, UP: 38, RIGHT: 39, BOTTOM: 40 };
+				
+				// Set to true to automatically rotate around the target
+				// If auto-rotate is enabled, you must call controls.update() in your animation loop
+				controls.autoRotate = true;
+				controls.autoRotateSpeed = 0.1; // 30 seconds per round when fps is 60
+				
+
+				// create clouds
+
+				var cloudloader = new GLTFLoader();
+					
+				for ( var i = 0; i < 35; i ++ ) {
+					cloudloader.load( 'models/gltf/Cloud.glb', function ( data ) {
+
+						gltf = data;
+						cloud = gltf.scene;
+						var s = 0.2 + (Math.random()/5);
+						cloud.scale.set( s, s, s);
+						cloud.rotation.y = -45;
+						
+						cloud.position.x = Math.random() * 800 - 400;
+						cloud.position.y = 150;
+						cloud.position.z = Math.random() * 800 - 400;
+						cloud.castShadow = true;
+						cloud.receiveShadow = true;
+						cloud.updateMatrix();
+						cloud.matrixAutoUpdate = false;
+						cloud.name = "cloud";
+						
+						scene.add( cloud );
+						
+					} );
+
+				} ;
+
+
+				/*cloudloader.load( 'models/gltf/Cloud.glb', function ( data ) {
+
+						gltf = data;
+						fg_cloud = gltf.scene;
+						var s = 0.4;
+						fg_cloud.scale.set( s, s, s);
+						fg_cloud.rotation.y = -45;
+						
+						fg_cloud.position.x = 150;
+						fg_cloud.position.y = 150;
+						fg_cloud.position.z = 150;
+						fg_cloud.castShadow = false;
+						fg_cloud.receiveShadow = true;
+						fg_cloud.updateMatrix();
+						fg_cloud.matrixAutoUpdate = false;
+						fg_cloud.name = "fg_cloud";
+						
+						scene.add( fg_cloud );
+						//console.log(fg_cloud);
+						
+					} );
+				console.log(fg_cloud);*/
+
+
+				// MODEL
+
+				var loader = new THREE.ObjectLoader();
+				loader.load( "models/json/scene5.json", function ( json_scene ) {
+
+					
+					scene.add( json_scene );
+
+				},
+
+				// onProgress callback
+
+				function ( xhr ) {
+
+					console.log( (xhr.loaded / xhr.total * 100) + '% loaded' );
+					var progress = xhr.loaded / xhr.total * 100;
+					if (progress > 99){
+						console.log("LOADED");
+						intro();
+					}
+
+				},
+
+				// onError callback
+				
+				function ( err ) {
+					console.error( 'An error happened' );
+				} );
+
+				
+
+
+				// LOAD ANIMATIONS
+				var gltfloader = new GLTFLoader();
+
+				gltfloader.load( 'models/gltf/Animations_Car2.glb', function ( gltf ) {
+
+					var model = gltf.scene;
+					model.position.set( 66, 21.2, -65 );
+					model.rotation.y = -1.15;
+					model.castShadow = true;
+					model.receiveShadow = true;
+
+					model.scale.set( 0.38, 0.38, 0.38 );
+					model.name = 'car_animation';
+					model.traverse( function ( child ) {
+
+						if ( child.isMesh ) {
+							//child.material.envMap = envMap;
+							child.material.castShadow = true;
+							child.material.receiveShadow = true;
+						}
+
+					} );
+
+					scene.add( model );
+
+					mixer = new THREE.AnimationMixer( model );
+					mixer.clipAction( gltf.animations[ 0 ] ).play();
+					mixer.clipAction( gltf.animations[ 0 ] ).timeScale = 0.6;
+
+					animate();
+
+					
+
+
+				}, undefined, function ( e ) {
+
+					console.error( e );
+
+				} );
+
+				//animate();
+
+				// LIGHTS
+
+				hemiLight = new THREE.HemisphereLight( 0x2926c9, 0x8ac5fa, 2 );
+				scene.add( hemiLight );
+
+
+				dLightPalace = new THREE.DirectionalLight( 0xefe8c2, 1.45 );
+				dLightPalace.position.set( 114, 95, 107 );
+				dLightPalace.castShadow = true;
+				dLightPalace.shadow.radius = 19;
+				//Set up shadow properties for the light
+				dLightPalace.shadow.mapSize.width = 256;  // default 512
+				dLightPalace.shadow.mapSize.height = 256; // default 512
+				dLightPalace.shadow.camera.near = 0.5;       // default 0.5
+				dLightPalace.shadow.camera.far = 500      // default 500
+				scene.add( dLightPalace );
+
+				//var dLightPalaceHelper = new THREE.DirectionalLightHelper( dLightPalace, 5, 0x000000 );
+				//scene.add( dLightPalaceHelper );
+
+				pLightPalace = new THREE.PointLight( 0xefe8c2, 1.4, 0, 2);
+				pLightPalace.position.set( -114, 155, 74 );
+				pLightPalace.castShadow = true;
+				pLightPalace.shadow.radius = 19;
+				//Set up shadow properties for the light
+				pLightPalace.shadow.mapSize.width = 512;  // default 512
+				pLightPalace.shadow.mapSize.height = 512; // default 512
+				pLightPalace.shadow.camera.near = 0.5;       // default 0.5
+				pLightPalace.shadow.camera.far = 1000      // default 500
+				scene.add( pLightPalace );
+
+				//var pLightPalaceHelper = new THREE.PointLightHelper( pLightPalace, 5, 0x000000 );
+				//scene.add( pLightPalaceHelper );
+
+				poiLightGCB = new THREE.PointLight( 0xefe8c2, 1, 0, 2);
+				poiLightGCB.position.set( 240, 174, -270 );
+				poiLightGCB.castShadow = true;
+				poiLightGCB.distance = 700;
+				poiLightGCB.shadow.radius = 2;
+				//Set up shadow properties for the light
+				poiLightGCB.shadow.mapSize.width = 512;  // default 512
+				poiLightGCB.shadow.mapSize.height = 512; // default 512
+				poiLightGCB.shadow.camera.near = 0.5;       // default 0.5
+				poiLightGCB.shadow.camera.far = 500      // default 500
+				scene.add( poiLightGCB );
+
+				//var poiLightGCBHelper = new THREE.PointLightHelper( poiLightGCB, 5, 0x000000 );
+				//scene.add( poiLightGCBHelper );
+
+				poiLightOffice = new THREE.PointLight( 0xefe8c2, 1, 0, 2);
+				poiLightOffice.position.set( -65, 290, -370 );
+				poiLightOffice.castShadow = true;
+				poiLightOffice.distance = 700;
+				poiLightOffice.shadow.radius = 2;
+				//Set up shadow properties for the light
+				poiLightOffice.shadow.mapSize.width = 512;  // default 512
+				poiLightOffice.shadow.mapSize.height = 512; // default 512
+				poiLightOffice.shadow.camera.near = 0.5;       // default 0.5
+				poiLightOffice.shadow.camera.far = 1000      // default 500
+				//scene.add( poiLightOffice );
+
+				//var poiLightOfficeHelper = new THREE.PointLightHelper( poiLightOffice, 5, 0x000000 );
+				//scene.add( poiLightOfficeHelper );
+
+				
+
+				// Create Camera target
+				var sphere = getSphere(5, 0, 16, 0x0498ff);
+				scene.add(sphere);
+				controls.target.set = sphere;
+
+
+
+				window.addEventListener( 'resize', onWindowResize, false );
+
+				
+				buildGui();
+				
+
+			}
+
+			function getSphere(radius, posX, posZ, color) {
+				  var geo = new THREE.SphereGeometry(radius, 24, 24);
+				  var material = new THREE.MeshStandardMaterial({
+				    color: color,
+				  });
+				  var mesh = new THREE.Mesh(geo, material);
+				  //mesh.castShadow = true;
+				  mesh.position.x = posX;
+				  mesh.position.z = posZ;
+				  //mesh.callback = ;
+				  return mesh;
+				}
+
+			
+
+			
+
+			function onWindowResize() {
+
+				camera.aspect = window.innerWidth / window.innerHeight;
+				
+				//console.log("aspect:"  + camera.aspect);
+				if(camera.aspect > 1.8){
+					camera.fov = 18;
+				} else if (camera.aspect < 1.8 && camera.aspect > 1){
+					camera.fov = 22;
+				} else if (camera.aspect < 1){
+					camera.fov = 26;
+				}
+
+				camera.updateProjectionMatrix();
+
+
+				renderer.setSize( window.innerWidth, window.innerHeight );
+
+			}
+
+			function intro(){
+				TWEEN.removeAll();
+				/*var posX = -606; //-486
+				var posY = 425; //425
+				var posZ = 680; // 610
+				var duration = 3000;
+				//var from = camera.position.clone();
+
+				new TWEEN.Tween( camera.position )
+						.to( { x: posX, y: posY, z: posZ }, duration )
+						.easing( TWEEN.Easing.Quintic.InOut )
+						.start();
+  				new TWEEN.Tween( this )
+					.to( {}, duration * 1000 )
+					.onUpdate( render )
+					.start();*/
+
+			}
+
+			
+
+			function animate() {
+				
+				stats.begin();
+				render();
+				stats.end();
+				
+
+				requestAnimationFrame( animate );
+
+				var delta = clock.getDelta();
+				mixer.update( delta );
+				controls.update(); // only required if controls.enableDamping = true, or if controls.autoRotate = true
+				TWEEN.update();
+
+				
+			}
+
+			function render() {
+
+				
+				//TWEEN.update();
+				renderer.render( scene, camera );
+
+			}
+
+			function buildGui() {
+
+				var h; 
+
+				gui = new GUI();
+
+				var params = {
+					hintensity: hemiLight.intensity,
+					'PD Color': dLightPalace.color.getHex(),
+					intensity: dLightPalace.intensity,
+					'PD x': dLightPalace.position.x,
+					'PD y': dLightPalace.position.y,
+					'PD z': dLightPalace.position.z,
+					'PP Color': pLightPalace.color.getHex(),
+					pintensity: pLightPalace.intensity,
+					pshadowradius: pLightPalace.shadow.radius,
+					'PP x': pLightPalace.position.x,
+					'PP y': pLightPalace.position.y,
+					'PP z': pLightPalace.position.z,
+					'PGCB Color': poiLightGCB.color.getHex(),
+					pgcbintensity: poiLightGCB.intensity,
+					pgcbshadowradius: poiLightGCB.shadow.radius,
+					'PGCB x': poiLightGCB.position.x,
+					'PGCB y': poiLightGCB.position.y,
+					'PGCB z': poiLightGCB.position.z,
+					'PGCB distance': poiLightGCB.distance,
+					'Office Color': poiLightOffice.color.getHex(),
+					officeintensity: poiLightOffice.intensity,
+					'office x': poiLightOffice.position.x,
+					'office y': poiLightOffice.position.y,
+					'office z': poiLightOffice.position.z,
+					'camera fov': camera.fov,
+					'camera near': camera.near,
+					'camera far': camera.far,
+					'camera x': camera.position.x,
+					'camera y': camera.position.y,
+					'camera z': camera.position.z,
+				};
+
+				h = gui.addFolder( "Hemisphere Light" );
+
+					h.add( params, 'hintensity', 0, 3 ).onChange( function ( val ) {
+
+							hemiLight.intensity = val;
+							render();
+
+						} );
+
+				h = gui.addFolder( "Palace Directional Light" );
+
+					h.addColor( params, 'PD Color' ).onChange( function ( val ) {
+
+						dLightPalace.color.setHex( val );
+						render();
+
+					} );
+
+					h.add( params, 'intensity', 0, 2 ).onChange( function ( val ) {
+
+						dLightPalace.intensity = val;
+						render();
+
+					} );
+
+
+
+					h.add( params, 'PD x', -100, 300 ).onChange( function ( val ) {
+
+						dLightPalace.position.x = val;
+						render();
+
+					} );
+
+					h.add( params, 'PD y', 50, 250 ).onChange( function ( val ) {
+
+						dLightPalace.position.y = val;
+						render();
+
+					} );
+
+					h.add( params, 'PD z', 0, 200 ).onChange( function ( val ) {
+
+						dLightPalace.position.z = val;
+						render();
+
+					} );
+
+				
+				h = gui.addFolder( "Palace Point Light" );
+
+					h.addColor( params, 'PP Color' ).onChange( function ( val ) {
+
+						pLightPalace.color.setHex( val );
+						render();
+
+					} );
+
+					h.add( params, 'pintensity', 0, 2 ).onChange( function ( val ) {
+
+						pLightPalace.intensity = val;
+						render();
+
+					} );
+
+					h.add( params, 'pshadowradius', 10, 40 ).onChange( function ( val ) {
+
+						pLightPalace.shadow.radius = val;
+						render();
+
+					} );
+
+					h.add( params, 'PP x', -200, 100 ).onChange( function ( val ) {
+
+						pLightPalace.position.x = val;
+						render();
+
+					} );
+
+					h.add( params, 'PP y', 50, 250 ).onChange( function ( val ) {
+
+						pLightPalace.position.y = val;
+						render();
+
+					} );
+
+					h.add( params, 'PP z', 0, 200 ).onChange( function ( val ) {
+
+						pLightPalace.position.z = val;
+						render();
+
+					} );
+
+				h = gui.addFolder( "GCB Point Light" );
+
+					h.addColor( params, 'PGCB Color' ).onChange( function ( val ) {
+
+						poiLightGCB.color.setHex( val );
+						render();
+
+					} );
+
+					h.add( params, 'pgcbintensity', 0, 2 ).onChange( function ( val ) {
+
+						poiLightGCB.intensity = val;
+						render();
+
+					} );
+
+					h.add( params, 'pgcbshadowradius', 10, 40 ).onChange( function ( val ) {
+
+						poiLightGCB.shadow.radius = val;
+						render();
+
+					} );
+
+					h.add( params, 'PGCB x', 100, 500 ).onChange( function ( val ) {
+
+						poiLightGCB.position.x = val;
+						render();
+
+					} );
+
+					h.add( params, 'PGCB y', 50, 250 ).onChange( function ( val ) {
+
+						poiLightGCB.position.y = val;
+						render();
+
+					} );
+
+					h.add( params, 'PGCB z', -400, 100 ).onChange( function ( val ) {
+
+						poiLightGCB.position.z = val;
+						render();
+
+					} );
+					h.add( params, 'PGCB distance', 0, 2000 ).onChange( function ( val ) {
+
+						poiLightGCB.distance = val;
+						render();
+
+					} );
+
+				h = gui.addFolder( "Office Point Light" );
+
+					h.addColor( params, 'Office Color' ).onChange( function ( val ) {
+
+						poiLightOffice.color.setHex( val );
+						render();
+
+					} );
+
+					h.add( params, 'officeintensity', 0, 2 ).onChange( function ( val ) {
+
+						poiLightOffice.intensity = val;
+						render();
+
+					} );
+
+					
+
+					h.add( params, 'office x', -200, 300 ).onChange( function ( val ) {
+
+						poiLightOffice.position.x = val;
+						render();
+
+					} );
+
+					h.add( params, 'office y', 100, 350 ).onChange( function ( val ) {
+
+						poiLightOffice.position.y = val;
+						render();
+
+					} );
+
+					h.add( params, 'office z', -500, 200 ).onChange( function ( val ) {
+
+						poiLightOffice.position.z = val;
+						render();
+
+					} );
+
+				
+					
+
+				
+				
+				
+
+				h = gui.addFolder( "Camera" );
+
+					
+
+					h.add( params, 'camera fov', 10, 40 ).onChange( function ( val ) {
+
+						camera.fov = val;
+						camera.updateProjectionMatrix();
+						//render();
+
+					} );
+					h.add( params, 'camera near', 5, 40 ).onChange( function ( val ) {
+
+						camera.near = val;
+						camera.updateProjectionMatrix();
+						//render();
+
+					} );
+					h.add( params, 'camera far', 1000, 3000 ).onChange( function ( val ) {
+
+						camera.far = val;
+						camera.updateProjectionMatrix();
+						//render();
+
+					} );
+					h.add( params, 'camera x', -800, 800 ).onChange( function ( val ) {
+
+						camera.position.x = val;
+						camera.updateProjectionMatrix();
+						//render();
+
+					} );
+					h.add( params, 'camera y', -800, 800 ).onChange( function ( val ) {
+
+						camera.position.y = val;
+						camera.updateProjectionMatrix();
+						//render();
+
+					} );
+					h.add( params, 'camera z', -200, 800 ).onChange( function ( val ) {
+
+						camera.position.z = val;
+						camera.updateProjectionMatrix();
+						//render();
+
+					} );
+
+
+
+				gui.close();
+
+			}
+
+		</script>
+
+	</body>
+</html>
